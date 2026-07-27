@@ -21,6 +21,7 @@ import {
   useChatFormContext,
   useAddedChatContext,
   useAssistantsMapContext,
+  BadgeRowProvider,
 } from '~/Providers';
 import useAskAnswerMode from '~/hooks/Input/useAskAnswerMode';
 import AskUserQuestionPopover from './AskUserQuestionPopover';
@@ -34,7 +35,7 @@ import ProjectLandingChip from '../ProjectLandingChip';
 import useDictation from '~/hooks/Input/useDictation';
 import { useGetStartupConfig } from '~/data-provider';
 import useSteering from '~/hooks/Chat/useSteering';
-import { BadgeRowProvider } from '~/Providers';
+
 import TextareaHeader from './TextareaHeader';
 import PromptsCommand from './PromptsCommand';
 import SkillsCommand from './SkillsCommand';
