@@ -27,6 +27,7 @@ jest.mock('~/Providers', () => {
     SearchContext: {
       Provider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
     },
+    useSearchContext: () => ({ searchResults: undefined }),
   };
 });
 
