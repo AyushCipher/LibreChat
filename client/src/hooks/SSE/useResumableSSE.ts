@@ -54,6 +54,7 @@ import {
   findReasoningLabelMessageIndex,
   appendAppliedSteerIds,
   collectAppliedSteerIds,
+  isLegacyDeliveryUncertain,
   removeConvoFromAllQueries,
   upsertConvoInAllQueries,
   countTaggedApprovalParts,
@@ -736,6 +737,8 @@ export const ABORT_SWEEP_STATUSES: readonly PendingSteer['status'][] = ['failed'
  * whose `onSuccess`/`onError` will settle them, and sweeping them here too
  * would race that callback, since a late ACK's re-add in
  * `resolveAcknowledgedSteer` could then double-queue the same words.
+ * Protocol-v1 uncertain failures are also excluded because there is no
+ * correlation id that can prove whether the server committed their POST.
  */
 export function selectLocalSteersForQueue(
   chips: PendingSteer[],
@@ -749,6 +752,7 @@ export function selectLocalSteersForQueue(
     .filter(
       (steer) =>
         allowed.has(steer.status) &&
+        !isLegacyDeliveryUncertain(steer) &&
         !excluded.has(steer.steerId) &&
         (steer.clientSteerId == null || !excluded.has(steer.clientSteerId)),
     )
