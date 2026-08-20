@@ -146,4 +146,6 @@ export enum MutationKeys {
   updateSchedule = 'updateSchedule',
   deleteSchedule = 'deleteSchedule',
   runSchedule = 'runSchedule',
+  convoSeen = 'convoSeen',
+  convoUnread = 'convoUnread',
 }
