@@ -29,6 +29,8 @@ interface SteerConvertOptions {
    *  consumed by THIS recovery generation. Never set for an arbitrary or
    *  pre-start status response: those can be stale after a successful start. */
   allowPreviouslyConvertedIds?: readonly string[];
+  /** Local failures have no durable receipt to reclaim on a later send. */
+  bindRecoverySource?: boolean;
 }
 
 /**
@@ -54,6 +56,7 @@ export default function useSteerConvert() {
         steers: ConvertibleSteer[],
         generationProtocolVersion?: GenerationProtocolVersion,
         allowPreviouslyConvertedIds: readonly string[] = [],
+        bindRecoverySource?: boolean,
       ) => {
         if (steers.length === 0) {
           return;
@@ -63,7 +66,7 @@ export default function useSteerConvert() {
           snapshot
             .getLoadable(store.activeGenerationProtocolVersionByConvoId(conversationId))
             .getValue();
-        const bindRecoverySource = negotiatedVersion === 2;
+        const shouldBindRecoverySource = bindRecoverySource ?? negotiatedVersion === 2;
         // Quotes/skill picks never ride the server steer; restore them from
         // the local chip (matched by id) before the chips are dropped below.
         const localChips = snapshot
@@ -99,7 +102,7 @@ export default function useSteerConvert() {
            * already created a receipt-bound item before the claim reached an
            * old replica, that source no longer exists. Downgrade the existing
            * item in place to an ordinary local follow-up. */
-          const existing = bindRecoverySource
+          const existing = shouldBindRecoverySource
             ? prev
             : prev.map((item) => {
                 const matchesClaimedSource =
@@ -127,7 +130,7 @@ export default function useSteerConvert() {
               const local = localChipFor(steer);
               const source = local ?? steer;
               const queuedOrigin = source.queuedOrigin;
-              const recoveryFields = bindRecoverySource
+              const recoveryFields = shouldBindRecoverySource
                 ? {
                     // One UUID is stable for this queued attempt and all of
                     // its POST retries. A later failed generation re-converts
@@ -199,6 +202,7 @@ export default function useSteerConvert() {
         steers,
         options?.generationProtocolVersion,
         options?.allowPreviouslyConvertedIds,
+        options?.bindRecoverySource,
       );
       if (options?.claimParked !== true || steers.length === 0) {
         return;

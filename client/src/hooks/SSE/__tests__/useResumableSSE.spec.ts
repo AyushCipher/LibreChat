@@ -4476,7 +4476,7 @@ describe('selectLocalSteersForQueue', () => {
     expect(selectLocalSteersForQueue([sending])).toEqual([]);
   });
 
-  it('preserves uncertain v1 deliveries while allowing idempotent v2 recovery', () => {
+  it('preserves uncertain deliveries for explicit same-id recovery', () => {
     const legacy = chip({
       steerId: 'legacy-uncertain',
       status: 'failed',
@@ -4490,9 +4490,7 @@ describe('selectLocalSteersForQueue', () => {
       generationProtocolVersion: 2,
     });
 
-    expect(selectLocalSteersForQueue([legacy, modern]).map((steer) => steer.steerId)).toEqual([
-      'modern-uncertain',
-    ]);
+    expect(selectLocalSteersForQueue([legacy, modern])).toEqual([]);
     expect(selectLocalSteersForQueue([legacy], ABORT_SWEEP_STATUSES)).toEqual([]);
   });
 
