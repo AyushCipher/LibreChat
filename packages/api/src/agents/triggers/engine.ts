@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { logger, runAsSystem } from '@librechat/data-schemas';
 import type { AgentTriggerExecutionResult } from './host';
+import { createAgentTriggerBatchEnvelope } from './batch';
 import { AgentTriggerDispatchError } from './dispatch';
 import { AgentTriggerExecutionError } from './host';
 
@@ -15,6 +16,37 @@ const ORDERING_RECHECK_MS = 250;
 const DEFAULT_DEFER_MS = 5_000;
 const MAX_RETRY_AFTER_MS = 24 * 60 * 60_000;
 
+function startedHandling(
+  delivery: Pick<AgentTriggerDeliveryRecord, 'envelope'>,
+  result: AgentTriggerExecutionResult,
+  startedAt: Date,
+): AgentTriggerDeliveryRecord['handling'] | undefined {
+  const envelope = delivery.envelope;
+  if (
+    envelope == null ||
+    typeof envelope !== 'object' ||
+    !('mode' in envelope) ||
+    envelope.mode !== 'continue' ||
+    !('target' in envelope) ||
+    envelope.target == null ||
+    typeof envelope.target !== 'object' ||
+    !('bindingId' in envelope.target) ||
+    result.mode !== 'continue' ||
+    result.status === 'settled' ||
+    result.streamId == null ||
+    result.generationCreatedAt == null
+  ) {
+    return undefined;
+  }
+  return {
+    status: 'started',
+    conversationId: result.conversationId,
+    streamId: result.streamId,
+    generationCreatedAt: result.generationCreatedAt,
+    startedAt,
+  };
+}
+
 /** A pre-dispatch condition that must not consume the delivery's retry budget. */
 export class AgentTriggerDeliveryDeferredError extends Error {
   readonly delayMs: number;
@@ -26,7 +58,13 @@ export class AgentTriggerDeliveryDeferredError extends Error {
   }
 }
 
-export type AgentTriggerDeliveryStatus = 'staging' | 'pending' | 'leased' | 'succeeded' | 'dead';
+export type AgentTriggerDeliveryStatus =
+  | 'staging'
+  | 'batched'
+  | 'pending'
+  | 'leased'
+  | 'succeeded'
+  | 'dead';
 
 export interface AgentTriggerDeliveryFailure {
   code: string;
@@ -50,9 +88,28 @@ export interface AgentTriggerDeliveryRecord {
   attempts: number;
   availableAt: Date;
   createdAt: Date;
+  envelopeBytes?: number;
+  coalesceKey?: string;
+  coalesceFrom?: Date;
+  coalesceUntil?: Date;
+  batchSize?: number;
+  batchBytes?: number;
+  batchMemberIds?: Array<{ toString(): string } | string>;
+  batchRootId?: { toString(): string } | string;
+  batchMembersSettledAt?: Date;
   leaseBy?: string;
   leaseUntil?: Date;
   lastError?: AgentTriggerDeliveryFailure;
+  handling?: {
+    status: 'started' | 'applied' | 'completed_no_action' | 'failed' | 'cancelled';
+    conversationId: string;
+    streamId: string;
+    generationCreatedAt: number;
+    startedAt: Date;
+    settledAt?: Date;
+    error?: string;
+    action?: { toolName: string; toolCallId?: string };
+  };
 }
 
 export interface AgentTriggerOrderingBlock {
@@ -70,6 +127,9 @@ export interface AgentTriggerDeliveryStore {
   findEarlierUnsettled: (
     delivery: AgentTriggerDeliveryRecord,
   ) => Promise<AgentTriggerOrderingBlock | null>;
+  getBatch: (
+    delivery: Pick<AgentTriggerDeliveryRecord, 'id' | 'batchMemberIds'>,
+  ) => Promise<Array<Pick<AgentTriggerDeliveryRecord, 'id' | 'deliveryKey' | 'envelope'>>>;
   release: (input: {
     id: string;
     workerId: string;
@@ -96,6 +156,7 @@ export interface AgentTriggerDeliveryStore {
     attempt: number;
     result: AgentTriggerExecutionResult;
     settledAt: Date;
+    handling?: AgentTriggerDeliveryRecord['handling'];
   }) => Promise<boolean>;
   retry: (input: {
     id: string;
@@ -350,7 +411,12 @@ export function createAgentTriggerDeliveryEngine(
     try {
       let result: AgentTriggerExecutionResult;
       try {
-        result = await deps.dispatch(delivery.envelope, { signal: controller.signal });
+        const members = await deps.store.getBatch(delivery);
+        const dispatchEnvelope =
+          members.length === 0
+            ? delivery.envelope
+            : createAgentTriggerBatchEnvelope(delivery, members);
+        result = await deps.dispatch(dispatchEnvelope, { signal: controller.signal });
       } catch (error) {
         const attemptedAt = now();
         const deletionCancelled = controller.signal.aborted && cancelledUsers.has(userId);
@@ -432,6 +498,7 @@ export function createAgentTriggerDeliveryEngine(
 
       const settledAt = now();
       try {
+        const handling = startedHandling(delivery, result, settledAt);
         await deps.store.complete({
           id: delivery.id,
           workerId,
@@ -439,6 +506,7 @@ export function createAgentTriggerDeliveryEngine(
           attempt,
           result,
           settledAt,
+          ...(handling != null && { handling }),
         });
       } catch (error) {
         const recorded: AgentTriggerDeliveryFailure = {

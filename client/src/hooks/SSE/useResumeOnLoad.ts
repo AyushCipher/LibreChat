@@ -14,6 +14,8 @@ import {
   dedupeSteersById,
   appendAppliedSteerIds,
   collectAppliedSteerIds,
+  collectDroppedSteerQuotes,
+  mergeRestagedQuotes,
   applyPendingAction,
   carriedSteerContext,
   getBranchSiblingIndexesForTarget,
@@ -354,7 +356,10 @@ export default function useResumeOnLoad(
                   generationCreatedAt: chipGenerationCreatedAt,
                 }),
                 generationProtocolVersion,
-                ...carriedSteerContext(localChip),
+                // The local chip carries skill picks the server never sees; a
+                // fresh tab has no chip, so fall back to the server item's
+                // persisted quotes rather than reseeding the chip without them.
+                ...carriedSteerContext(localChip ?? steer),
               };
             }),
             ...prev.filter((steer) => steer.status === 'failed' && !claimedIds.has(steer.steerId)),
@@ -365,13 +370,25 @@ export default function useResumeOnLoad(
   );
 
   const settleAppliedSteerParts = useRecoilCallback(
-    ({ set }) =>
+    ({ snapshot, set }) =>
       (activeConversationId: string, values: unknown[] | undefined) => {
         const ids = collectAppliedSteerIds(values);
         if (ids.length === 0) {
           return;
         }
         const settled = new Set(ids);
+        /** Chips settled by quote-less applied parts hold the only copy of
+         *  their excerpts (a pre-quotes server injected the words bare) —
+         *  re-stage them as composer chips before the removal below. */
+        const droppedQuotes = collectDroppedSteerQuotes(
+          values,
+          snapshot.getLoadable(store.pendingSteersByConvoId(activeConversationId)).getValue(),
+        );
+        if (droppedQuotes.length > 0) {
+          set(store.pendingQuotesByConvoId(activeConversationId), (prev) =>
+            mergeRestagedQuotes(prev, droppedQuotes),
+          );
+        }
         set(store.appliedSteerIdsByConvoId(activeConversationId), (prev) =>
           appendAppliedSteerIds(prev, ids),
         );
@@ -446,6 +463,7 @@ export default function useResumeOnLoad(
 
   const {
     data: streamStatus,
+    dataUpdatedAt: streamStatusUpdatedAt,
     isSuccess,
     isFetching,
   } = useStreamStatus(conversationId, shouldCheck);
@@ -592,9 +610,23 @@ export default function useResumeOnLoad(
     const messages = getMessages() || [];
     /** Fill the elapsed baseline only when none survives: a reattach to the run
      *  this session already anchored keeps its original start (the atom outlives
-     *  the submission), while a run it never anchored — another client's, or any
-     *  attach after the previous run's terminal clear — counts from attach. */
-    setSubmissionStart((prev) => prev ?? Date.now());
+     *  the submission). A run it never anchored — after a reload, or started by
+     *  another client — rebuilds the real baseline from the server-computed
+     *  generation age, which keeps both clocks comparing only to themselves.
+     *  The age is subtracted from the moment the status RESPONSE arrived
+     *  (`dataUpdatedAt`), not from now: this effect trails the response behind
+     *  `messagesLoaded`, and a slow history fetch would silently shrink the
+     *  reading. Raw `createdAt` (an older server) still beats counting from
+     *  attach; the indicator clamps whatever skew that carries. */
+    setSubmissionStart((prev) => {
+      if (prev != null) {
+        return prev;
+      }
+      if (streamStatus.elapsedMs != null) {
+        return (streamStatusUpdatedAt || Date.now()) - streamStatus.elapsedMs;
+      }
+      return streamStatus.createdAt ?? Date.now();
+    });
 
     // Build submission from resume state if available
     if (streamStatus.resumeState) {
@@ -662,6 +694,7 @@ export default function useResumeOnLoad(
     isSuccess,
     isFetching,
     streamStatus,
+    streamStatusUpdatedAt,
     getMessages,
     setSubmission,
     setSubmissionStart,

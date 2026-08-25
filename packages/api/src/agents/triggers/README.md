@@ -108,6 +108,14 @@ results include the conversation and generation identity needed for a later `ste
 responses never expose the stored source payload, ordering key, retry history, or worker identity.
 Callers must sanitize `event.payload`; credentials and transport secrets must not be persisted.
 
+For a bound `continue`, `succeeded` means generation admission succeeded, not that the requested
+work finished. The status response therefore also exposes a durable `handling` lifecycle:
+`started`, followed by exactly one of `applied`, `completed_no_action`, `failed`, or `cancelled`.
+Action-aware bound-child sources may send an `expectedAction` containing a tool name and optional
+argument subset. LibreChat reports `applied` only when the exact generation completes with
+host-observed tool evidence matching that contract; model-authored prose is never accepted as
+proof. Fire, steer, and unbound continue deliveries reject this contract.
+
 ### Event-driven child actors
 
 Register a direct child agent once under the same Remote Agents API key that will deliver events.
@@ -164,3 +172,43 @@ caller-supplied target fields are discarded. It also resolves the latest assista
 immediately before dispatch, so queued events do not persist stale chat topology. Each actor binding
 is its default ordering lane. A short-lived internal trigger token plus a second binding lookup is
 required to pass the child-thread write guard; possessing a binding id alone grants no access.
+
+### Coalescing observational child events
+
+Sources that can prove several bound `continue` events are interchangeable observations may opt
+those deliveries into one bounded child turn. Add the same source-defined compatibility key to each
+compatible request:
+
+Set `endpoints.agents.eventDriven.coalescing: true` only after every API replica runs a release
+that understands batched deliveries. It defaults to false so a rolling deployment cannot let an
+older worker consume only the root event while silently acknowledging the remaining members. The
+`ENABLE_AGENT_EVENT_COALESCING` environment override remains available for compatibility.
+
+```json
+{
+  "mode": "continue",
+  "bindingId": "evtbind_…",
+  "event": {
+    "id": "championship-7-game-12-move-18",
+    "type": "chess.move.completed",
+    "occurredAt": 1786968000750,
+    "payload": { "gameId": "game-12", "ply": 18 }
+  },
+  "input": "A tournament game advanced.",
+  "coalesce": { "key": "championship-commentary" }
+}
+```
+
+LibreChat collects compatible events for up to 750 ms, with a maximum of 8 events and 512 KiB of
+combined envelopes. It invokes the child once with a deterministic JSON document whose
+`kind` is `librechat.agent_event_batch`; the document contains every event, source input, delivery
+identity, and a count by event type. Each source event still requires its own stable
+`Idempotency-Key`, durable delivery record, and status receipt. Retrying one event cannot duplicate
+the batch or create another branch.
+
+Coalescing is intentionally accepted only for authenticated bound-child `continue` deliveries.
+The source must not set `coalesce` for a player turn, command, fence, approval, HITL request, or any
+event whose individual timing or acknowledgment is actionable. `fire`, `steer`, and unbound
+`continue` deliveries reject the option instead of silently weakening their semantics. Deliveries
+with `expectedAction` also reject coalescing because one generation cannot prove several distinct
+action fences.

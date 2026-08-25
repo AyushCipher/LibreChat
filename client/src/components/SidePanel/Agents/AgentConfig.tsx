@@ -105,6 +105,7 @@ export default function AgentConfig() {
             {localize('com_ui_model')} <span className="text-text-destructive">*</span>
           </Label>
           <button
+            id="provider"
             type="button"
             onClick={() => setActivePanel(Panel.model)}
             title={model || undefined}

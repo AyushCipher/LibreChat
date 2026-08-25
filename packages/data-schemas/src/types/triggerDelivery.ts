@@ -1,7 +1,27 @@
 import type { Document, Types } from 'mongoose';
 
-export type AgentTriggerDeliveryStatus = 'staging' | 'pending' | 'leased' | 'succeeded' | 'dead';
+export type AgentTriggerDeliveryStatus =
+  | 'staging'
+  | 'batched'
+  | 'pending'
+  | 'leased'
+  | 'succeeded'
+  | 'dead';
 export type AgentTriggerDeliveryOutcome = 'succeeded' | 'retry' | 'dead';
+
+export interface AgentTriggerHandlingState {
+  status: 'started' | 'applied' | 'completed_no_action' | 'failed' | 'cancelled';
+  conversationId: string;
+  streamId: string;
+  generationCreatedAt: number;
+  startedAt: Date;
+  settledAt?: Date;
+  error?: string;
+  action?: {
+    toolName: string;
+    toolCallId?: string;
+  };
+}
 
 export interface AgentTriggerDeliveryFailure {
   code: string;
@@ -33,6 +53,17 @@ export interface IAgentTriggerDelivery {
   status: AgentTriggerDeliveryStatus;
   attempts: number;
   availableAt: Date;
+  envelopeBytes?: number;
+  coalesceKey?: string;
+  coalesceFrom?: Date;
+  coalesceUntil?: Date;
+  batchSize?: number;
+  batchBytes?: number;
+  batchMemberIds?: Types.ObjectId[];
+  batchRootId?: Types.ObjectId;
+  batchRootRequeueCount?: number;
+  batchMembersSettledAt?: Date;
+  handling?: AgentTriggerHandlingState;
   leaseBy?: string;
   leaseUntil?: Date;
   claimToken?: string;
@@ -71,6 +102,7 @@ export type AgentTriggerDeliveryStatusRecord = Pick<
   | 'settledAt'
   | 'result'
   | 'lastError'
+  | 'handling'
 >;
 
 export interface IAgentTriggerLaneSequence {
